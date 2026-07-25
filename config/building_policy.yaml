@@ -1,0 +1,65 @@
+# building_policy.yaml
+# Operator-editable hard bounds for Project Envelope.
+# The Sentinel Gate loads this file at startup — changing a number here
+# changes system behavior with no code edits and no redeploy.
+
+comfort:
+  # ASHRAE-55 style operative temperature band, in Celsius.
+  temp_min_c: 20.0
+  temp_max_c: 26.0
+  # Deadband between heating and cooling setpoints derived from a single
+  # AI/baseline-proposed target (target = cooling setpoint;
+  # heating setpoint = target - deadband). Actually wired into
+  # core/energyplus_bridge.py now — both actuators are driven from this.
+  deadband_c: 2.0
+  # CO2 ceiling in ppm (kept for future occupancy/IAQ integration).
+  co2_ceiling_ppm: 800
+
+rate_limits:
+  # Maximum allowed change in setpoint per control step, in Celsius.
+  max_delta_c_per_step: 2.0
+
+gate:
+  # CCS (Control Confidence Score) threshold below which a proposal is
+  # rejected and sent back to the Strategist with a correction reason.
+  ccs_threshold: 0.70
+  # Weights for the CCS formula (must sum to 1.0).
+  weights:
+    violation: 0.40
+    rate_penalty: 0.25
+    llm_confidence: 0.20
+    override_rate: 0.15
+
+strategist:
+  model: "llama-3.1-8b-instant"
+  call_timeout_s: 8
+  correction_timeout_s: 5
+  forecast_lookahead_hours: 3
+  # Cadence: run the Strategist every N EnergyPlus system timesteps.
+  cadence_steps: 60
+
+failsafe:
+  # Fallback rule-based setback controller target band, in Celsius.
+  target_low_c: 21.0
+  target_high_c: 23.0
+  setback_c: 1.0
+
+baseline:
+  # Feature 2's comparison instance: a single fixed setpoint, no AI,
+  # no gate — what the building would do on a plain thermostat schedule.
+  schedule_setpoint_c: 22.0
+
+carbon:
+  # Explicitly simulated/representative — not a live grid feed.
+  source: "simulated"
+  profile: "flat_medium"   # flat_medium | day_peak | night_low
+
+paths:
+  baseline_idf: "models/baseline.idf"
+  controlled_idf: "models/controlled.idf"
+  epw: "models/baseline.epw"
+  # AI-controlled and baseline-schedule instances write to separate log
+  # files/output dirs so they can run as two parallel processes without
+  # colliding (Feature 2 - see main.py's --baseline flag).
+  control_log_ai: "logs/ai/control_log.jsonl"
+  control_log_baseline: "logs/baseline/control_log.jsonl"
