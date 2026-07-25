@@ -38,9 +38,33 @@ Keep baseline.idf as-is for whatever you use as the comparison instance
 (see README.md for why you likely want a THIRD file - a schedule-only
 baseline - rather than the literally-uncontrolled original, if you want
 Feature 2's "baseline vs AI" comparison to mean anything energy-wise).
+
+--- Design-day patch: v2, regex-based ---
+The original version of this script matched the SimulationControl block
+with an exact multi-line string. That's brittle: any whitespace drift,
+line-ending difference, or reformatting in baseline.idf (including ones
+introduced by opening/resaving the file in some editors, or a different
+EnergyPlus version's example-file export) makes the exact match silently
+fail. It prints a console warning in that case, but a printed warning is
+easy to miss, and the result is controlled.idf quietly keeping the
+design-day sizing-period pollution with no hard failure.
+
+This version instead:
+  1. Finds the SimulationControl object as a whole (by its object header,
+     case-insensitive, up to the terminating ';') rather than assuming
+     exact formatting.
+  2. Within that block, finds the specific field whose trailing IDF field
+     comment says "Run Simulation for Sizing Periods" (case-insensitive,
+     whitespace-tolerant) rather than matching the field's *value* text,
+     since the comment is the stable identifier and the Yes/No value is
+     exactly what we're changing.
+  3. Reports how many fields it actually patched, so "0 found" and
+     "found 2+ (unexpected duplicate object)" are both visible instead of
+     silently doing nothing or the wrong thing.
 """
 
 import os
+import re
 
 ZONE_NAME = "ZONE ONE"
 
@@ -151,10 +175,86 @@ ZoneHVAC:IdealLoadsAirSystem,
     ;                                  !- Latent Heat Recovery Effectiveness {{dimensionless}}
 """
 
+# Matches the whole SimulationControl,...; object, however its internal
+# whitespace/line-endings are formatted. DOTALL so '.' spans newlines;
+# non-greedy up to the first ';' so it doesn't swallow the next object.
+_SIM_CONTROL_RE = re.compile(
+    r"SimulationControl\s*,.*?;",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Matches a single IDF field line ending in the
+# "!- Run Simulation for Sizing Periods" comment, capturing:
+#   prefix  - leading whitespace (preserved so indentation doesn't shift)
+#   value   - the current Yes/No token
+#   sep     - the trailing comma/semicolon plus whitespace before '!-'
+#   comment - the field comment itself (preserved verbatim)
+# Matching on the comment (the stable identifier) rather than the value
+# (the thing we're changing) is what makes this robust to the value
+# already being "No", already being "Yes", or having odd spacing.
+_SIZING_FIELD_RE = re.compile(
+    r"""
+    (?P<prefix>[ \t]*)
+    (?P<value>Yes|No)
+    (?P<sep>\s*[,;]\s*)
+    (?P<comment>!-\s*Run\s+Simulation\s+for\s+Sizing\s+Periods)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _patch_sizing_periods(content):
+    """
+    Finds every SimulationControl object in `content` and flips its
+    'Run Simulation for Sizing Periods' field value to 'No', matched by
+    the stable trailing field comment rather than an exact string block.
+    Returns (new_content, num_fields_patched).
+    """
+    patched_count = 0
+
+    def _replace_field(field_match):
+        nonlocal patched_count
+        patched_count += 1
+        return f"{field_match.group('prefix')}No{field_match.group('sep')}{field_match.group('comment')}"
+
+    def _replace_block(block_match):
+        block = block_match.group(0)
+        return _SIZING_FIELD_RE.sub(_replace_field, block)
+
+    new_content = _SIM_CONTROL_RE.sub(_replace_block, content)
+    return new_content, patched_count
+
 
 def patch(src="models/baseline.idf", dst="models/controlled.idf"):
     with open(src, "r", encoding="latin-1") as f:
         content = f.read()
+
+    # Design-day sizing periods (e.g. Denver's 99% annual heating design
+    # day) were being fully simulated -- burning control steps and Groq
+    # calls on synthetic extreme-weather days that aren't part of the
+    # real annual run -- even though Do Zone/System/Plant Sizing
+    # Calculation are already "No" and never consume that sizing data.
+    # Flip this one field so only the real .epw weather-file period runs.
+    content, patched_count = _patch_sizing_periods(content)
+
+    if patched_count == 0:
+        print("WARNING: no 'Run Simulation for Sizing Periods' field was found "
+              "inside any SimulationControl object in models/baseline.idf -- "
+              "design-day sizing periods were NOT patched. Open "
+              "models/controlled.idf, find the SimulationControl object by "
+              "hand, and set that field to 'No'. Then check whether "
+              "baseline.idf's SimulationControl object is formatted "
+              "differently than expected (e.g. the field comment text "
+              "itself was changed) and update _SIZING_FIELD_RE above to match.")
+    elif patched_count > 1:
+        print(f"WARNING: patched {patched_count} 'Run Simulation for Sizing "
+              f"Periods' fields (expected exactly 1) -- models/baseline.idf "
+              f"appears to contain more than one SimulationControl object. "
+              f"Verify models/controlled.idf by hand before relying on it.")
+    else:
+        print("Design-day sizing periods disabled (SimulationControl patched, "
+              "1 field matched).")
+
     with open(dst, "w", encoding="latin-1") as f:
         f.write(content)
         f.write("\n")

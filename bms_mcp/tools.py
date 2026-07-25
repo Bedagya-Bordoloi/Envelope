@@ -4,14 +4,13 @@ mcp/tools.py
 The four tools named in the problem statement: get_state, set_hvac,
 get_weather, get_carbon_intensity.
 
-Fix vs. the previous version: set_hvac now accepts optional confidence
-and reason fields, not just setpoint_c. This is what makes real
-tool-calling possible in agents/strategist.py (Feature 8) — the model
-can call get_state/get_weather/get_carbon_intensity to gather its own
-context, then call set_hvac as its final action, the same way it would
-against any other tool-calling BMS integration. Previously set_hvac only
-took a bare number, which wasn't enough for the gate to score the
-proposal (it also needs a stated confidence).
+carbon_intensity_level() is now the single source of truth for the
+simulated carbon signal -- both this tool and main.py's control loop
+(which needs the same value to pass into SentinelGate.check()) call it,
+so the two can never drift out of sync. Entirely YAML-driven: which
+profile is active, how long each level lasts, and what labels exist are
+all read from policy["carbon"] -- add a new profile in the YAML and it
+works here with no code change.
 """
 
 from dataclasses import dataclass
@@ -22,7 +21,27 @@ class ToolContext:
     """Shared handle to whatever the tools need to read/write."""
     bridge: object            # core.energyplus_bridge.EnergyPlusBridge instance
     policy: dict
-    carbon_profile: str = "flat_medium"
+    carbon_profile: str = "flat_medium"   # kept for backward compat; policy["carbon"] is authoritative
+
+
+# ---------------------------------------------------------------------------
+# Carbon signal -- single source of truth, YAML-driven
+# ---------------------------------------------------------------------------
+def carbon_intensity_level(step: int, policy: dict) -> str:
+    """
+    Cycles through policy["carbon"]["profiles"][<active profile>] every
+    policy["carbon"]["cycle_steps"] control steps. Add a new profile, or
+    change how long each level lasts, purely in the YAML.
+    """
+    carbon_cfg = (policy or {}).get("carbon", {})
+    profile_name = carbon_cfg.get("profile", "flat_medium")
+    profiles = carbon_cfg.get("profiles", {"flat_medium": ["Low", "Medium", "High"]})
+    levels = profiles.get(profile_name, ["Low", "Medium", "High"])
+    cycle_steps = int(carbon_cfg.get("cycle_steps", 30))
+    if not levels or cycle_steps <= 0:
+        return "Medium"
+    idx = (step // cycle_steps) % len(levels)
+    return levels[idx]
 
 
 # ---------------------------------------------------------------------------
@@ -46,11 +65,10 @@ def set_hvac(ctx: ToolContext, setpoint_c: float, confidence: float = 0.8,
              reason: str = "") -> dict:
     """
     Stage a new HVAC cooling setpoint proposal for Sentinel Gate review.
-    This is the Strategist's ACTION tool — calling it is how the model
-    commits to a final decision for this cadence tick, the same way a
-    human operator would submit a setpoint change request. It does NOT
-    bypass the Sentinel Gate: main.py's control loop is what actually
-    calls set_actuator_value after the gate approves it.
+    This is the Strategist's ACTION tool -- calling it is how the model
+    commits to a final decision for this cadence tick. It does NOT bypass
+    the Sentinel Gate: main.py's control loop is what actually calls
+    set_actuator_value after the gate approves it.
     """
     ctx.bridge.pending_setpoint = float(setpoint_c)
     return {
@@ -64,7 +82,7 @@ def set_hvac(ctx: ToolContext, setpoint_c: float, confidence: float = 0.8,
 def get_weather(ctx: ToolContext, hours: int = 3) -> dict:
     """
     Forward look-ahead using the simulation's OWN known future weather from
-    the loaded .epw file — a deterministic proxy for a live forecast, not
+    the loaded .epw file -- a deterministic proxy for a live forecast, not
     live data.
     """
     window = ctx.bridge.get_forward_weather(hours=hours)
@@ -78,12 +96,14 @@ def get_weather(ctx: ToolContext, hours: int = 3) -> dict:
 def get_carbon_intensity(ctx: ToolContext) -> dict:
     """
     Explicitly simulated grid carbon-intensity signal, not a live API.
+    Uses carbon_intensity_level() so this always matches whatever the
+    gate itself is scoring against -- no drift between the Strategist's
+    view and the Governor's view.
     """
-    profile = ctx.carbon_profile
     step = getattr(ctx.bridge, "step_counter", 0)
-    cycle = (step // 30) % 3
-    level = ["Low", "Medium", "High"][cycle] if profile == "flat_medium" else "Medium"
-    return {"carbon_intensity": level, "source": "simulated"}
+    level = carbon_intensity_level(step, ctx.policy)
+    profile = (ctx.policy or {}).get("carbon", {}).get("profile", ctx.carbon_profile)
+    return {"carbon_intensity": level, "source": "simulated", "profile": profile}
 
 
 # ---------------------------------------------------------------------------

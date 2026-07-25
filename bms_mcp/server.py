@@ -1,18 +1,23 @@
 """
 mcp/server.py
 
-Exposes the four tools in mcp/tools.py as a real MCP server, per the PS's
-"MCP Server or custom agentic tools" allowance.
+Exposes the four tools in bms_mcp/tools.py as a real MCP server, per the
+PS's "MCP Server or custom agentic tools" allowance.
 
 Two ways this gets used:
 
-1. Standalone (`python mcp/server.py`) - runs a real MCP server over stdio
-   using the official `mcp` Python SDK. Requires `pip install mcp`.
+1. Standalone (`python bms_mcp/server.py`) - runs a real MCP server over
+   stdio using the official `mcp` Python SDK. Requires `pip install mcp`.
+   Lets any real MCP client (Claude Desktop, another agent, an MCP
+   inspector) connect to Project Envelope's tools over the actual MCP
+   protocol -- this is what makes Feature 8 a genuine "MCP Server", not
+   just a phrase in the README.
 
-2. In-process (imported by main.py-style code) - callers use
-   mcp.tools.call_tool(...) directly using TOOL_SCHEMAS for Groq's
-   function-calling, with zero MCP protocol overhead. This is the path
-   actually used during the closed-loop run in main.py.
+2. In-process (used by agents/strategist.py via main.py) - the live
+   control loop calls bms_mcp.tools.call_tool(...) directly using
+   TOOL_SCHEMAS for Groq's function-calling, with zero MCP protocol/
+   subprocess overhead. This is the path actually used during the
+   closed-loop run, by design -- see this file's bottom note for why.
 """
 
 import sys
@@ -20,7 +25,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mcp.tools import ToolContext, TOOL_SCHEMAS, call_tool  # noqa: E402
+from bms_mcp.tools import ToolContext, TOOL_SCHEMAS, call_tool  # noqa: E402
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -59,7 +64,7 @@ def main():
             "MCP server over stdio.\n"
             "Install it with: pip install mcp\n"
             "Until then, main.py already talks to these tools directly via "
-            "mcp/tools.py's call_tool() + TOOL_SCHEMAS."
+            "bms_mcp/tools.py's call_tool() + TOOL_SCHEMAS."
         )
         return
 

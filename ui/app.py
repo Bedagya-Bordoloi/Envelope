@@ -5,152 +5,114 @@ import plotly.graph_objects as go
 import time
 import os
 
-st.set_page_config(layout="wide", page_title="Envelope BMS Dashboard")
-st.title("Project Envelope: AI-Gated BMS")
+# --- PAGE SETUP ---
+st.set_page_config(layout="wide", page_title="Eco-Loop: AI vs Baseline")
 
 AI_LOG = "logs/ai/control_log.jsonl"
 BASELINE_LOG = "logs/baseline/control_log.jsonl"
 
-metric_placeholder = st.sidebar.empty()
-chart_placeholder = st.empty()
-energy_placeholder = st.empty()
-log_placeholder = st.empty()
+def get_last_valid_json(path):
+    if not os.path.exists(path) or os.path.getsize(path) == 0: return None
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            offset = min(size, 4096)
+            f.seek(size - offset)
+            lines = f.read().decode(errors='ignore').splitlines()
+            for line in reversed(lines):
+                try: return json.loads(line)
+                except: continue
+    except: return None
 
+@st.cache_data(ttl=2) 
+def load_and_align_data():
+    if not os.path.exists(AI_LOG) or not os.path.exists(BASELINE_LOG):
+        return pd.DataFrame(), pd.DataFrame(), {}
 
-def load_log(path):
-    data = []
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            for line in f:
-                try:
-                    row = json.loads(line)
-                    if str(row.get('reason')) == '0' or not row.get('reason'):
-                        row['reason'] = "Waiting..."
-                    data.append(row)
-                except Exception:
-                    continue
-    df = pd.DataFrame(data)
-    for col in ['step', 'source', 'setpoint', 'reason', 't_in', 't_out', 'cumulative_kwh']:
-        if col not in df.columns:
-            df[col] = None
+    # 1. Load AI and Baseline into DataFrames
+    ai_raw = []
+    with open(AI_LOG, 'r') as f:
+        for line in f:
+            try: ai_raw.append(json.loads(line))
+            except: continue
+    
+    base_raw = []
+    with open(BASELINE_LOG, 'r') as f:
+        for line in f:
+            try: base_raw.append(json.loads(line))
+            except: continue
 
-    # FIX: with the energyplus_bridge.py dedupe fix, 'step' should already
-    # be a clean 1-per-simulated-instant counter. Keep this as a defensive
-    # backstop for logs recorded before that fix (or from any other source
-    # of duplicate rows) — collapse to one row per step, keeping the last.
-    if not df.empty and df['step'].notna().any():
-        df['step'] = pd.to_numeric(df['step'], errors='coerce')
-        df = df.dropna(subset=['step']).sort_values('step')
-        df = df.drop_duplicates(subset='step', keep='last').reset_index(drop=True)
-    return df
+    if not ai_raw or not base_raw: return pd.DataFrame(), pd.DataFrame(), {}
 
+    df_ai = pd.DataFrame(ai_raw)
+    df_base = pd.DataFrame(base_raw)
 
-def align_on_shared_steps(ai_df, baseline_df):
-    """
-    FIX: previously the AI and baseline logs were compared by DataFrame
-    row index, which silently assumes both instances have advanced the
-    same amount of simulated time by row N — they don't, since each
-    process free-runs independently. This trims both to the steps they
-    actually have in common, so 'Live savings vs baseline' reflects the
-    same simulated window on both sides instead of comparing two
-    different points in the weather file.
-    """
-    if ai_df.empty or baseline_df.empty:
-        return ai_df, baseline_df
-    max_shared_step = min(ai_df['step'].max(), baseline_df['step'].max())
-    ai_aligned = ai_df[ai_df['step'] <= max_shared_step]
-    baseline_aligned = baseline_df[baseline_df['step'] <= max_shared_step]
-    return ai_aligned, baseline_aligned
+    # 2. THE "TRAILING MATCH" LOGIC (Scientific & Accurate)
+    # Find the last step that BOTH files have recorded
+    max_common_step = min(df_ai['step'].max(), df_base['step'].max())
 
+    # Filter both to this common point
+    ai_synced = df_ai[df_ai['step'] <= max_common_step]
+    base_synced = df_base[df_base['step'] <= max_common_step]
 
-while True:
-    ai_df = load_log(AI_LOG)
-    baseline_df = load_log(BASELINE_LOG)
-    ai_aligned, baseline_aligned = align_on_shared_steps(ai_df, baseline_df)
+    # Get metrics at this exact shared point
+    last_ai_row = ai_synced.iloc[-1]
+    last_base_row = base_synced.iloc[-1]
 
-    if not ai_df.empty and len(ai_df) > 2:
-        # 1. Sidebar metrics (AI instance)
-        with metric_placeholder.container():
-            st.metric("Indoor Temp (AI)", f"{ai_df['t_in'].iloc[-1]:.2f} °C")
-            st.metric("Outdoor Temp", f"{ai_df['t_out'].iloc[-1]:.2f} °C")
-            st.write(f"AI Control Step: {ai_df['step'].iloc[-1]}")
-            if not baseline_df.empty:
-                st.write(f"Baseline Control Step: {baseline_df['step'].iloc[-1]}")
-                st.caption(
-                    f"Compared range: step 0 – "
-                    f"{int(ai_aligned['step'].max()) if not ai_aligned.empty else 0} "
-                    f"(overlap of both runs)"
-                )
-            else:
-                st.write("Baseline: not running — start it with `python main.py --baseline`")
+    metrics = {
+        "shared_step": max_common_step,
+        "ai_full_step": df_ai['step'].max(),
+        "base_full_step": df_base['step'].max(),
+        "t_in": last_ai_row['t_in'],
+        "t_out": last_ai_row['t_out'],
+        "ai_kwh": last_ai_row['cumulative_kwh'],
+        "base_kwh": last_base_row['cumulative_kwh']
+    }
 
-        # 2. Overlay chart — Feature 2: baseline vs AI on the same chart.
-        # FIX: explicit x=...['step'] instead of relying on row index, so
-        # the axis reflects real simulated step even if either log has
-        # gaps (e.g. from the dedupe above).
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=ai_df['step'], y=ai_df['t_in'], name="AI Indoor",
-                                  line=dict(color='orange')))
-        fig.add_trace(go.Scatter(x=ai_df['step'], y=ai_df['t_out'], name="Outdoor",
-                                  line=dict(color='deepskyblue', dash='dot')))
-        fig.add_trace(go.Scatter(x=ai_df['step'], y=ai_df['setpoint'], name="AI Setpoint",
-                                  line=dict(color='lime', shape='hv')))
-        if not baseline_df.empty:
-            fig.add_trace(go.Scatter(x=baseline_df['step'], y=baseline_df['t_in'], name="Baseline Indoor",
-                                      line=dict(color='hotpink', dash='dash')))
-            fig.add_trace(go.Scatter(x=baseline_df['step'], y=baseline_df['setpoint'], name="Baseline Setpoint",
-                                      line=dict(color='violet', dash='dot', shape='hv')))
+    # Only return the last 1000 shared steps for the chart (for speed)
+    return ai_synced.tail(1000), base_synced.tail(1000), metrics
 
-        fig.update_layout(
-            title="Live Building Physics: AI vs Baseline",
-            height=450,
-            template="plotly_dark",
-            xaxis_title="Simulation Step",
-        )
-        chart_placeholder.plotly_chart(fig, width='stretch', key=f"chart_{time.time_ns()}")
+# --- UI RENDER ---
+st.title("Project Envelope: AI-Gated BMS")
 
-        # 3. Live energy overlay + savings number (Feature 2's headline metric)
-        # FIX: uses ai_aligned / baseline_aligned (trimmed to the shared
-        # step range) instead of the raw full-length logs, so the savings
-        # number compares the same simulated window on both sides.
-        with energy_placeholder.container():
-            st.write("### Energy: AI vs Baseline")
-            ai_kwh_series = pd.to_numeric(ai_aligned['cumulative_kwh'], errors='coerce').dropna() \
-                if not ai_aligned.empty else pd.Series(dtype=float)
-            if not ai_kwh_series.empty and not baseline_aligned.empty:
-                base_kwh_series = pd.to_numeric(baseline_aligned['cumulative_kwh'], errors='coerce').dropna()
-                if not base_kwh_series.empty:
-                    ai_kwh = ai_kwh_series.iloc[-1]
-                    base_kwh = base_kwh_series.iloc[-1]
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("AI cumulative energy (aligned)", f"{ai_kwh:.2f} kWh")
-                    col2.metric("Baseline cumulative energy (aligned)", f"{base_kwh:.2f} kWh")
-                    if base_kwh > 0:
-                        savings_pct = (base_kwh - ai_kwh) / base_kwh * 100
-                        col3.metric("Live savings vs baseline", f"{savings_pct:.1f}%")
-                    else:
-                        col3.metric("Live savings vs baseline", "N/A")
+ai_df, base_df, stats = load_and_align_data()
 
-                    e_fig = go.Figure()
-                    e_fig.add_trace(go.Scatter(x=ai_aligned['step'], y=ai_kwh_series,
-                                                name="AI kWh", line=dict(color='orange')))
-                    e_fig.add_trace(go.Scatter(x=baseline_aligned['step'], y=base_kwh_series,
-                                                name="Baseline kWh", line=dict(color='hotpink')))
-                    e_fig.update_layout(height=300, template="plotly_dark",
-                                         xaxis_title="Simulation Step", yaxis_title="Cumulative kWh")
-                    st.plotly_chart(e_fig, width='stretch', key=f"energy_{time.time_ns()}")
-            else:
-                st.info("Energy tracking data not yet available, or the AI and "
-                        "baseline runs don't have any overlapping simulated-step "
-                        "range yet. If this stays empty once both instances are "
-                        "running, check the console output for a facility-meter "
-                        "warning from core/energyplus_bridge.py.")
+if not stats:
+    st.info("Awaiting simulation sync...")
+    time.sleep(5); st.rerun()
 
-        # 4. Decision log
-        with log_placeholder.container():
-            st.write("### Explainable AI Decisions")
-            display_df = ai_df[ai_df['source'].isin(['AI', 'AI (Corrected)', 'FAILSAFE', 'FAILSAFE (gate override)'])].tail(5)
-            if not display_df.empty:
-                st.table(display_df[['step', 'source', 'setpoint', 'reason']])
+# 1. SIDEBAR
+with st.sidebar:
+    st.header("Real-time Stats")
+    st.metric("Indoor Temp (AI)", f"{stats['t_in']:.2f} °C")
+    st.metric("Outdoor Temp", f"{stats['t_out']:.2f} °C")
+    st.divider()
+    st.write(f"**AI Logic at Step:** {int(stats['ai_full_step'])}")
+    st.write(f"**Baseline at Step:** {int(stats['base_full_step'])}")
+    st.success(f"Comparing at shared Step: {int(stats['shared_step'])}")
 
-    time.sleep(2)
+# 2. ENERGY COMPARISON (Always visible now!)
+st.header(f"Performance at Step {int(stats['shared_step'])}")
+c1, c2, c3 = st.columns(3)
+c1.metric("AI Energy", f"{stats['ai_kwh']:.2f} kWh")
+c2.metric("Baseline Energy", f"{stats['base_kwh']:.2f} kWh")
+
+savings = (stats['base_kwh'] - stats['ai_kwh']) / stats['base_kwh'] * 100 if stats['base_kwh'] > 0 else 0
+c3.metric("Live Savings", f"{savings:.1f}%", delta=f"{savings:.1f}%")
+
+# 3. PHYSICS CHART (Synced perfectly)
+st.subheader("Building Physics: Aligned View")
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=ai_df['step'], y=ai_df['t_in'], name="AI Indoor", line=dict(color='orange')))
+fig.add_trace(go.Scatter(x=base_df['step'], y=base_df['t_in'], name="Baseline Indoor", line=dict(color='hotpink', dash='dash')))
+fig.add_trace(go.Scatter(x=ai_df['step'], y=ai_df['t_out'], name="Outdoor", line=dict(color='deepskyblue', dash='dot')))
+fig.update_layout(height=400, template="plotly_dark", xaxis_title="Simulation Step")
+st.plotly_chart(fig, use_container_width=True)
+
+# 4. DECISIONS
+st.header("Explainable AI Decisions")
+display_df = ai_df[ai_df['source'].str.contains('AI|FAILSAFE', na=False)].tail(5)
+st.dataframe(display_df[['step', 'source', 'setpoint', 'reason']], use_container_width=True, hide_index=True)
+
+time.sleep(3); st.rerun()
