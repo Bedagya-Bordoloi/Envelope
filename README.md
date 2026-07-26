@@ -142,6 +142,10 @@ The following screenshots show the live interaction between the EnergyPlus physi
 ![Decision Log](assests/honeywell3.9aitable.jpg)
 *Figure 2: The Explainable AI decision log showing the Sentinel Gate in action.*
 
+## Working demo
+The following demo presents the live working demo of the system:
+[Click here to watch the demo video](https://drive.google.com/file/d/1mr0sxNNNSCR1TodRuRMqV35PI54Au_KI/view?usp=sharing)
+
 ## 🛡️ Safety & Failsafes
 *   **Network Loss:** If the Groq API fails/timeouts, the system instantly switches to the `FailsafeController`, maintaining the building between 21°C and 23°C.
 *   **Gate Override:** If the AI fails to produce a safe setpoint even after correction, the Governor forces a "Hold Steady" command to prevent equipment damage.
