@@ -136,12 +136,11 @@ The following sequence from `control_log.jsonl` demonstrates the **Sentinel Gate
 ## 📊 Project Dashboard
 The following screenshots show the live interaction between the EnergyPlus physics engine and the AI Strategist.
 
-![Dashboard Overview](blob:https://web.whatsapp.com/1190a544-69c7-4db8-85f0-0132f0bdea33)
+![Dashboard Overview](assests/honeywell3.9.jpg)
 *Figure 1: Real-time alignment of AI vs. Baseline energy curves and indoor temperatures.*
 
-![Decision Log](blob:https://web.whatsapp.com/fa33cc95-5c2f-4819-9083-77612e3a5331)
+![Decision Log](assests/honeywell3.9aitable.jpg)
 *Figure 2: The Explainable AI decision log showing the Sentinel Gate in action.*
-
 
 ## 🛡️ Safety & Failsafes
 *   **Network Loss:** If the Groq API fails/timeouts, the system instantly switches to the `FailsafeController`, maintaining the building between 21°C and 23°C.
