@@ -129,12 +129,3 @@ From a completed simulation run:
 ## 🛡️ Safety & Failsafes
 *   **Network Loss:** If the Groq API fails/timeouts, the system instantly switches to the `FailsafeController`, maintaining the building between 21°C and 23°C.
 *   **Gate Override:** If the AI fails to produce a safe setpoint even after correction, the Governor forces a "Hold Steady" command to prevent equipment damage.
-```
-
-***
-
-### Why this is better:
-1.  **Removes the "Code/Bash" noise:** Your preview was showing the literal words "code" and "Bash" inside the text. This uses standard Markdown backticks.
-2.  **Professional Tables:** I converted your results into Markdown tables, which judges can read much faster than a list.
-3.  **Clear "Quick Start":** The numbered steps make it very easy for a judge to try and run your project.
-4.  **Emphasizes the Fix:** It explicitly mentions `controlled.idf` vs `baseline.idf`, showing you understand how EnergyPlus actuators work.
