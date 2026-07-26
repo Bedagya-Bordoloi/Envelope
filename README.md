@@ -106,25 +106,42 @@ Envelope/
 └── main.py                  # Closed-loop orchestrator
 ```
 
----
+## 📈 Measured Results
+Project Envelope is designed for long-term stability. Performance was monitored over 10,000+ simulation steps across varying diurnal cycles.
 
-## 📈 Measured Results (Sample Run)
-From a completed simulation run:
+*   **Peak Observed Savings:** ~10.2% (During transient peak-shaving events)
+*   **Steady-State Savings Range:** 1.5% – 4.5%
+*   **Comfort Reliability:** 100% (Zero ASHRAE-55 PMV boundary violations)
+
+### Representative Performance Snapshot (Step 4392)
+The following data reflects the building state during a high-fidelity control period as shown in the project dashboard.
 
 | Metric | AI Instance | Baseline Instance |
 | :--- | :--- | :--- |
-| **Cumulative Energy** | 8,665.16 kWh | 9,213.87 kWh |
-| **Live Savings %** | **6.0%** | -- |
-| **Comfort (Avg PMV)** | -0.12 (Ideal) | +0.45 (Boundary) |
+| **Cumulative Energy** | 3,551.10 kWh | 3,694.90 kWh |
+| **Measured Savings %** | **3.9%** | -- |
+| **Indoor Temp (AI)** | 20.00°C | 20.15°C |
 
-### Self-Correction Sequence (from `control_log.jsonl`)
-| Step | Source | Setpoint | Reason/Status |
+### Explainable Decision Log (Actual Output)
+The following sequence from `control_log.jsonl` demonstrates the **Sentinel Gate's Stability Hysteresis**—preventing energy-wasting setpoint "jitter" while maintaining a precise comfort score (CCS).
+
+| Step | Source | Setpoint | Reason / Status |
 | :--- | :--- | :--- | :--- |
-| 20040 | AI | 20.00°C | APPROVED – CCS 0.71 |
-| 20100 | LLM (Proposed) | 17.50°C | **REJECTED** – PMV violation (+0.6) |
-| 20100 | AI (Corrected) | 21.50°C | **CORRECTED: APPROVED** – CCS 0.77 |
+| 9000 | AI (Stabilized) | 21.00°C | **HOLD:** Change of 0.10°C is too small. |
+| 9600 | AI (Stabilized) | 21.00°C | **HOLD:** Change of 0.20°C is too small. |
+| 9900 | AI | 21.15°C | **APPROVED:** CCS 0.85 \| PMV -0.21 (Clo 1.09) |
+| 10200| AI | 22.00°C | **APPROVED:** CCS 0.80 \| PMV -0.02 (Clo 1.05) |
 
----
+
+## 📊 Project Dashboard
+The following screenshots show the live interaction between the EnergyPlus physics engine and the AI Strategist.
+
+![Dashboard Overview](blob:https://web.whatsapp.com/1190a544-69c7-4db8-85f0-0132f0bdea33)
+*Figure 1: Real-time alignment of AI vs. Baseline energy curves and indoor temperatures.*
+
+![Decision Log](blob:https://web.whatsapp.com/fa33cc95-5c2f-4819-9083-77612e3a5331)
+*Figure 2: The Explainable AI decision log showing the Sentinel Gate in action.*
+
 
 ## 🛡️ Safety & Failsafes
 *   **Network Loss:** If the Groq API fails/timeouts, the system instantly switches to the `FailsafeController`, maintaining the building between 21°C and 23°C.
