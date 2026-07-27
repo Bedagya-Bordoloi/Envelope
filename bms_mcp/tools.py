@@ -107,7 +107,7 @@ def get_carbon_intensity(ctx: ToolContext) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# JSON-schema tool definitions (OpenAI/Groq function-calling compatible)
+# JSON-schema tool definitions (Groq function-calling compatible)
 # ---------------------------------------------------------------------------
 
 TOOL_SCHEMAS = [
