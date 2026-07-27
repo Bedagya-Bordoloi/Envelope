@@ -92,7 +92,7 @@ with st.sidebar:
     st.write(f"**Baseline at Step:** {int(stats['base_full_step'])}")
     st.success(f"Comparing at shared Step: {int(stats['shared_step'])}")
 
-# 2. ENERGY COMPARISON (Always visible now!)
+# 2. ENERGY COMPARISON 
 st.header(f"Performance at Step {int(stats['shared_step'])}")
 c1, c2, c3 = st.columns(3)
 c1.metric("AI Energy", f"{stats['ai_kwh']:.2f} kWh")
@@ -101,7 +101,7 @@ c2.metric("Baseline Energy", f"{stats['base_kwh']:.2f} kWh")
 savings = (stats['base_kwh'] - stats['ai_kwh']) / stats['base_kwh'] * 100 if stats['base_kwh'] > 0 else 0
 c3.metric("Live Savings", f"{savings:.1f}%", delta=f"{savings:.1f}%")
 
-# 3. PHYSICS CHART (Synced perfectly)
+# 3. PHYSICS CHART 
 st.subheader("Building Physics: Aligned View")
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=ai_df['step'], y=ai_df['t_in'], name="AI Indoor", line=dict(color='orange')))
